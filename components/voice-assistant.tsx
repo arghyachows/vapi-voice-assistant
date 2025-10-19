@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from 'react'
 import Vapi from '@vapi-ai/web'
-import { Mic, MicOff, Loader2 } from 'lucide-react'
+import { Mic, MicOff, Loader2, ArrowLeft } from 'lucide-react'
+import { TUTORING_TOPICS, TutoringTopic, formatTutorPrompt } from '../lib/topics'
+import TopicSelector from './topic-selector'
 
 type AssistantState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking'
 
@@ -13,6 +15,7 @@ interface Message {
 }
 
 export default function VoiceAssistant() {
+  const [selectedTopic, setSelectedTopic] = useState<TutoringTopic | null>(null)
   const [state, setState] = useState<AssistantState>('idle')
   const [isCallActive, setIsCallActive] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
@@ -32,7 +35,7 @@ export default function VoiceAssistant() {
 
     // Event: Call started
     vapiRef.current.on('call-start', () => {
-      console.log('📞 Call started')
+      console.log('📞 Tutoring session started')
       setIsCallActive(true)
       setState('listening')
       setError('')
@@ -40,24 +43,24 @@ export default function VoiceAssistant() {
 
     // Event: Call ended
     vapiRef.current.on('call-end', () => {
-      console.log('📞 Call ended')
+      console.log('📞 Tutoring session ended')
       setIsCallActive(false)
       setState('idle')
     })
 
-    // Event: Speech start (both user and assistant)
+    // Event: User starts speaking
     vapiRef.current.on('speech-start', () => {
-      console.log('🎤 Speech started')
-      // Don't change state here as we need to determine if it's user or assistant
+      console.log('🎤 Student speaking')
+      setState('listening')
     })
 
-    // Event: Speech end (both user and assistant)
+    // Event: User stops speaking
     vapiRef.current.on('speech-end', () => {
-      console.log('🤐 Speech ended')
-      // Don't change state here as we need to determine if it's user or assistant
+      console.log('🤔 Processing...')
+      setState('thinking')
     })
 
-    // Event: Transcript messages (for detecting assistant speech)
+    // Event: Transcript messages
     vapiRef.current.on('message', (message: any) => {
       if (message.type === 'transcript' && message.transcriptType === 'final') {
         const newMessage: Message = {
@@ -66,14 +69,18 @@ export default function VoiceAssistant() {
           timestamp: new Date(),
         }
         setMessages(prev => [...prev, newMessage])
-
-        // Update state based on who is speaking
-        if (message.role === 'assistant') {
-          setState('speaking')
-        } else if (message.role === 'user') {
-          setState('thinking')
-        }
       }
+    })
+
+    // Event: Speech events (both user and assistant)
+    vapiRef.current.on('speech-start', () => {
+      console.log('🗣️ Speech started')
+      // State will be updated via message events
+    })
+
+    vapiRef.current.on('speech-end', () => {
+      console.log('🤐 Speech ended')
+      // State will be updated via message events
     })
 
     // Event: Error
@@ -92,10 +99,11 @@ export default function VoiceAssistant() {
     }
   }, [])
 
-  const startCall = async () => {
+  const startTutoringSession = async (topic: TutoringTopic) => {
     try {
       setState('connecting')
       setError('')
+      setMessages([])
 
       const assistantId = process.env.NEXT_PUBLIC_VAPI_ASSISTANT_ID
 
@@ -103,41 +111,99 @@ export default function VoiceAssistant() {
         throw new Error('Assistant ID not configured')
       }
 
-      await vapiRef.current?.start(assistantId)
+      // Start call with topic-specific system prompt override
+      await vapiRef.current?.start(assistantId, {
+        firstMessage: `Hello! I'm your ${topic.name} tutor. ${topic.emoji} I'm here to help you learn at your own pace. What would you like to start with, or should I suggest a good starting point?`,
+      })
+
+      // Send system prompt as a message after starting the call
+      setTimeout(() => {
+        vapiRef.current?.send({
+          type: 'add-message',
+          message: {
+            role: 'system',
+            content: formatTutorPrompt(topic),
+          },
+        })
+      }, 1000)
+
+      setSelectedTopic(topic)
     } catch (err) {
-      console.error('Failed to start call:', err)
-      setError(err instanceof Error ? err.message : 'Failed to start call')
+      console.error('Failed to start tutoring session:', err)
+      setError(err instanceof Error ? err.message : 'Failed to start session')
       setState('idle')
     }
   }
 
-  const stopCall = () => {
+  const stopSession = () => {
     vapiRef.current?.stop()
+    setSelectedTopic(null)
+    setMessages([])
   }
 
+  const backToTopics = () => {
+    setSelectedTopic(null)
+    setMessages([])
+    setState('idle')
+  }
+
+  // Show topic selector if no topic selected
+  if (!selectedTopic) {
+    return (
+      <TopicSelector topics={TUTORING_TOPICS} onSelectTopic={startTutoringSession} />
+    )
+  }
+
+  // Show tutoring interface
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-blue-600 via-purple-600 to-pink-500">
       <div className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-8 text-white">
-          <h1 className="text-3xl font-bold mb-2">🎙️ AI Voice Assistant</h1>
-          <p className="text-blue-100">Powered by Vapi + Groq</p>
+        <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-6 text-white">
+          <div className="flex items-center justify-between mb-2">
+            <button
+              onClick={backToTopics}
+              disabled={isCallActive}
+              className="flex items-center gap-2 text-sm hover:text-white/80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Change Topic
+            </button>
+            <span className="text-2xl">{selectedTopic.emoji}</span>
+          </div>
+          <h1 className="text-2xl font-bold mb-1">
+            {selectedTopic.name} Tutor
+          </h1>
+          <p className="text-blue-100 text-sm">
+            {selectedTopic.description}
+          </p>
         </div>
 
         {/* Status Badge */}
-        <div className="p-6 border-b">
+        <div className="p-4 border-b bg-gray-50">
           <StatusBadge state={state} />
         </div>
 
         {/* Transcript */}
-        <div className="p-6 h-96 overflow-y-auto bg-gray-50">
+        <div className="p-6 h-96 overflow-y-auto bg-white">
           {messages.length === 0 ? (
-            <div className="h-full flex items-center justify-center text-gray-400">
-              <p className="text-center">
-                {isCallActive
-                  ? 'Start speaking...'
-                  : 'Click "Start Conversation" to begin'}
-              </p>
+            <div className="h-full flex flex-col items-center justify-center text-gray-400">
+              {isCallActive ? (
+                <>
+                  <Loader2 className="w-8 h-8 animate-spin mb-4 text-purple-500" />
+                  <p className="text-center">Tutor is preparing...</p>
+                </>
+              ) : (
+                <>
+                  <div className="text-5xl mb-4">{selectedTopic.emoji}</div>
+                  <p className="text-center text-gray-600 mb-2">
+                    Ready to start learning!
+                  </p>
+                  <p className="text-center text-sm">
+                    Click "Start Tutoring Session" to begin
+                  </p>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -147,6 +213,23 @@ export default function VoiceAssistant() {
             </div>
           )}
         </div>
+
+        {/* Learning Objectives Sidebar (shown when not in call) */}
+        {!isCallActive && messages.length === 0 && (
+          <div className="p-6 bg-purple-50 border-t border-purple-100">
+            <h3 className="font-semibold text-sm text-purple-900 mb-3">
+              📚 What you'll learn:
+            </h3>
+            <ul className="space-y-2">
+              {selectedTopic.learningObjectives.map((obj, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-purple-700">
+                  <span className="text-purple-500 mt-0.5">✓</span>
+                  <span>{obj}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Error Display */}
         {error && (
@@ -159,29 +242,29 @@ export default function VoiceAssistant() {
         <div className="p-6 bg-white border-t">
           {!isCallActive ? (
             <button
-              onClick={startCall}
+              onClick={() => startTutoringSession(selectedTopic)}
               disabled={state === 'connecting'}
               className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl font-semibold hover:from-blue-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
             >
               {state === 'connecting' ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  Connecting...
+                  Starting Session...
                 </>
               ) : (
                 <>
                   <Mic className="w-5 h-5" />
-                  Start Conversation
+                  Start Tutoring Session
                 </>
               )}
             </button>
           ) : (
             <button
-              onClick={stopCall}
+              onClick={stopSession}
               className="w-full py-4 px-6 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 transition-all flex items-center justify-center gap-3"
             >
               <MicOff className="w-5 h-5" />
-              End Call
+              End Session
             </button>
           )}
         </div>
@@ -197,7 +280,7 @@ function StatusBadge({ state }: { state: AssistantState }) {
     connecting: { emoji: '⚡', text: 'Connecting...', bg: 'bg-yellow-100', textColor: 'text-yellow-700' },
     listening: { emoji: '👂', text: 'Listening...', bg: 'bg-green-100', textColor: 'text-green-700' },
     thinking: { emoji: '🤔', text: 'Thinking...', bg: 'bg-blue-100', textColor: 'text-blue-700' },
-    speaking: { emoji: '🗣️', text: 'Speaking...', bg: 'bg-purple-100', textColor: 'text-purple-700' },
+    speaking: { emoji: '🎓', text: 'Teaching...', bg: 'bg-purple-100', textColor: 'text-purple-700' },
   }
 
   const { emoji, text, bg, textColor } = config[state]
@@ -219,8 +302,13 @@ function MessageBubble({ message }: { message: Message }) {
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-3 ${isUser ? 'bg-blue-500 text-white rounded-br-sm' : 'bg-white text-gray-900 border border-gray-200 rounded-bl-sm'}`}
+        className={`max-w-[80%] rounded-2xl px-4 py-3 ${isUser ? 'bg-blue-500 text-white rounded-br-sm' : 'bg-purple-50 text-gray-900 border border-purple-200 rounded-bl-sm'}`}
       >
+        <div className="flex items-start gap-2 mb-1">
+          <span className="text-sm font-semibold">
+            {isUser ? '👤 You' : '🎓 Tutor'}
+          </span>
+        </div>
         <p className="text-sm leading-relaxed">{message.text}</p>
         <p className={`text-xs mt-2 ${isUser ? 'text-blue-100' : 'text-gray-400'}`}>
           {message.timestamp.toLocaleTimeString()}
