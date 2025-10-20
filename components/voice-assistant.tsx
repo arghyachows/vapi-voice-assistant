@@ -61,11 +61,11 @@ export default function VoiceAssistant() {
     })
 
     // Event: Transcript messages
-    vapiRef.current.on('message', (message: any) => {
+    vapiRef.current.on('message', (message: { type: string; transcriptType?: string; role?: string; transcript?: string }) => {
       if (message.type === 'transcript' && message.transcriptType === 'final') {
         const newMessage: Message = {
-          role: message.role,
-          text: message.transcript,
+          role: (message.role as 'user' | 'assistant') || 'assistant',
+          text: message.transcript || '',
           timestamp: new Date(),
         }
         setMessages(prev => [...prev, newMessage])
@@ -84,7 +84,7 @@ export default function VoiceAssistant() {
     })
 
     // Event: Error
-    vapiRef.current.on('error', (error: any) => {
+    vapiRef.current.on('error', (error: { message?: string }) => {
       console.error('❌ Vapi error:', error)
       setError(error.message || 'An error occurred')
       setState('idle')
@@ -200,7 +200,7 @@ export default function VoiceAssistant() {
                     Ready to start learning!
                   </p>
                   <p className="text-center text-sm">
-                    Click "Start Tutoring Session" to begin
+                    Click &ldquo;Start Tutoring Session&rdquo; to begin
                   </p>
                 </>
               )}
@@ -218,7 +218,7 @@ export default function VoiceAssistant() {
         {!isCallActive && messages.length === 0 && (
           <div className="p-6 bg-purple-50 border-t border-purple-100">
             <h3 className="font-semibold text-sm text-purple-900 mb-3">
-              📚 What you'll learn:
+              📚 What you will learn:
             </h3>
             <ul className="space-y-2">
               {selectedTopic.learningObjectives.map((obj, i) => (
